@@ -1,0 +1,11 @@
+.env
+/vendor/
+/storage/cache/*
+/storage/sessions/*
+!/storage/cache/.gitkeep
+!/storage/sessions/.gitkeep
+/storage/.proxy-key
+/storage/.db-initialized
+/storage/.initial-admin-key
+.DS_Store
+*.log
