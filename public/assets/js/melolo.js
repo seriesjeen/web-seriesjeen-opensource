@@ -309,8 +309,14 @@
       if (moovBox) neutralizeDRM(buf, moovBox.offset, moovBox.offset + moovBox.size);
 
       const took = ((Date.now() - t0) / 1000).toFixed(1);
-    log(`พร้อมเล่น ${(buf.length / 1048576).toFixed(1)}MB / ${took}s`);
-    return new Blob([buf], { type: 'video/mp4' });
+      log(`พร้อมเล่น ${(buf.length / 1048576).toFixed(1)}MB / ${took}s`);
+      return new Blob([buf], { type: 'video/mp4' });
+    } finally {
+      // Always detach the abort listener so we don't leak handlers across episodes.
+      if (window.__sjAbortSignal) {
+        window.__sjAbortSignal.removeEventListener('abort', abortHandler);
+      }
+    }
   }
 
   class MeloloPlayer {

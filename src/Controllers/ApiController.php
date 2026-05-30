@@ -18,15 +18,22 @@ final class ApiController
         $vid = (string)$args['vid'];
         if (!preg_match('/^[a-f0-9]{16,64}$/i', $vid)) {
             Response::json(['error' => 'Invalid kid'], 400);
+            return;
         }
-        $apiKey = Session::get('api_key');
-        if (!is_string($apiKey)) Response::json(['error' => 'Unauthorized'], 401);
+        // Auth gate: user must be logged into the app.
+        if (!Session::get('api_key')) {
+            Response::json(['error' => 'Unauthorized'], 401);
+            return;
+        }
 
+        // Upstream calls authenticate with the app's own SERIES_API_KEY (same as
+        // PlatformRegistry) — NOT the user's login key-code held in the session.
         try {
-            $client = new SeriesApiClient($apiKey);
+            $client = new SeriesApiClient($_ENV['SERIES_API_KEY'] ?? '');
             $resp = $client->getJson('/api/platform/melolo/key', ['vid' => $vid]);
         } catch (ApiException $e) {
             Response::json(['error' => $e->getMessage()], $e->httpStatus);
+            return;
         }
         Response::json(['key' => $resp['key'] ?? null]);
     }
