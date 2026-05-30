@@ -23,7 +23,7 @@ final class IdramaAdapter extends BaseAdapter
         $d = $this->fetch($seriesId);
         return [
             'title'         => (string)($d['short_play_name'] ?? $d['title'] ?? self::findTitle($d) ?? ''),
-            'description'   => $d['short_play_describ'] ?? $d['description'] ?? self::findDescription($d),
+            'description'   => $d['introduction'] ?? $d['short_play_describ'] ?? $d['description'] ?? self::findDescription($d),
             'cover'         => $d['cover_url'] ?? $d['compress_cover_url'] ?? null,
             'episode_count' => isset($d['current_count']) ? (int)$d['current_count'] : (isset($d['total_count']) ? (int)$d['total_count'] : null),
             'genre'         => self::flattenGenre($d['content_tag'] ?? null),
@@ -48,7 +48,7 @@ final class IdramaAdapter extends BaseAdapter
                 ];
             }
             $subs = [];
-            foreach (($ep['subtitle_url_list'] ?? $ep['subtitles'] ?? []) as $s) {
+            foreach (($ep['subtitle_list'] ?? $ep['subtitle_url_list'] ?? $ep['subtitles'] ?? []) as $s) {
                 if (!is_array($s)) continue;
                 $url = $s['url'] ?? $s['subtitle_url'] ?? null;
                 if (!$url) continue;

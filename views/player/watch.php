@@ -74,24 +74,20 @@ usort($episodes, fn($a, $b) => ($a['episode'] ?? 0) <=> ($b['episode'] ?? 0));
                     $n = (int)($ep['episode'] ?? 0);
                     if ($n === 0) continue;
                     $isCurrent = $n === $episode;
-                    $locked = !empty($ep['locked']);
                     $href = '/p/' . urlencode($slug) . '/watch/' . urlencode($series_id) . '/' . $n;
                 ?>
-                    <a href="<?= $locked ? '#' : View::e($href) ?>"
-                       onclick="<?= $locked ? "Swal.fire({icon: 'warning', title: 'ตอนถูกล็อก!', text: 'ตอนนี้ยังไม่เปิดให้รับชมในบัญชีของคุณ', confirmButtonColor: 'var(--brand-color)', background: '#090d16', color: '#cbd5e1'}); return false;" : "" ?>"
+                    <a href="<?= View::e($href) ?>"
                        class="relative text-xs aspect-square rounded-xl border transition-all duration-300 flex items-center justify-center font-bold active:scale-95 overflow-hidden group/item
-                              <?= $isCurrent ? 'active-genre border-brand-500 shadow-md shadow-brand-500/20' : ($locked ? 'bg-slate-950/40 border-slate-900/60 text-slate-600 cursor-not-allowed' : 'bg-slate-900/40 border-slate-800 hover:border-brand-500 text-slate-300 hover:text-white hover:shadow-lg hover:shadow-brand-500/5') ?>">
-                        
+                              <?= $isCurrent ? 'active-genre border-brand-500 shadow-md shadow-brand-500/20' : 'bg-slate-900/40 border-slate-800 hover:border-brand-500 text-slate-300 hover:text-white hover:shadow-lg hover:shadow-brand-500/5' ?>">
+
                         <!-- Mini overlay glow effect on hover -->
-                        <?php if (!$isCurrent && !$locked): ?>
+                        <?php if (!$isCurrent): ?>
                             <div class="absolute inset-0 bg-gradient-to-tr from-brand-500/0 to-indigo-500/0 group-hover/item:from-brand-500/5 group-hover/item:to-indigo-500/5 transition duration-300 pointer-events-none"></div>
                         <?php endif ?>
 
                         <span class="relative z-10 font-black">EP <?= $n ?></span>
-                        
-                        <?php if ($locked): ?>
-                            <i class="fa-solid fa-lock text-[8px] absolute top-1 right-1.5 text-slate-650"></i>
-                        <?php elseif ($isCurrent): ?>
+
+                        <?php if ($isCurrent): ?>
                             <i class="fa-solid fa-circle-play text-[8px] absolute top-1 right-1.5 text-white/95 animate-pulse"></i>
                         <?php endif ?>
                     </a>

@@ -57,22 +57,40 @@ final class ReelifeAdapter extends BaseAdapter
 
     public function playEpisode(string $seriesId, int $episode): array
     {
-        // /play/{book_id}/{episode} returns {bookId, chapterId, standbyUrls:[mp4...]}
+        // /play/{book_id}/{episode} → {data:{chapterContentList:[{mp4720p, mp4720pStandByUrl[],
+        //                              videoInfoList:[{videoPath/url, ...}]}]}, video_url}
         $resp = $this->api->getJson($this->basePath() . '/play/' . rawurlencode($seriesId) . '/' . $episode);
         $d = $resp['data'] ?? $resp;
         $sources = [];
-        foreach (($d['standbyUrls'] ?? []) as $url) {
-            if (!is_string($url)) continue;
-            // Guess quality from URL (540p.mp4 → '540')
-            $q = preg_match('#([0-9]{3,4})p\.#', $url, $m) ? $m[1] : 'auto';
-            $sources[] = ['quality'=>$q, 'codec'=>'h264', 'url'=>$url];
-        }
-        // Single URL fallback
-        foreach (['m3u8_url', 'url', 'videoUrl', 'cdn'] as $f) {
-            if (empty($sources) && !empty($d[$f])) {
-                $sources[] = ['quality'=>'auto', 'codec'=>'h264', 'url'=>(string)$d[$f]];
+        $seen = [];
+        $add = function (?string $url, string $q = 'auto') use (&$sources, &$seen) {
+            if (!is_string($url) || $url === '' || isset($seen[$url])) return;
+            if (!preg_match('#^https?://#', $url)) return;
+            if ($q === 'auto' && preg_match('#([0-9]{3,4})p#i', $url, $m)) $q = $m[1];
+            $seen[$url] = true;
+            $sources[] = ['quality' => $q, 'codec' => 'h264', 'url' => $url];
+        };
+
+        foreach (($d['chapterContentList'] ?? []) as $c) {
+            if (!is_array($c)) continue;
+            // primary 720p + standby mirrors
+            $add($c['mp4720p'] ?? null, '720');
+            foreach ((array)($c['mp4720pStandByUrl'] ?? []) as $u) $add(is_string($u) ? $u : null, '720');
+            // multi-quality list
+            foreach (($c['videoInfoList'] ?? []) as $vi) {
+                if (!is_array($vi)) continue;
+                $u = $vi['videoPath'] ?? $vi['url'] ?? $vi['mp4'] ?? null;
+                $q = isset($vi['quality']) ? (string)$vi['quality'] : 'auto';
+                $add(is_string($u) ? $u : null, $q);
             }
         }
+        // Top-level / single-URL fallbacks
+        foreach (['video_url', 'm3u8_url', 'url', 'videoUrl', 'cdn'] as $f) {
+            if (!empty($resp[$f])) $add((string)$resp[$f]);
+            if (!empty($d[$f])) $add((string)$d[$f]);
+        }
+        foreach ((array)($d['standbyUrls'] ?? []) as $u) $add(is_string($u) ? $u : null);
+
         return ['episode'=>$episode, 'locked'=>false, 'sources'=>$sources, 'subtitles'=>[]];
     }
 }

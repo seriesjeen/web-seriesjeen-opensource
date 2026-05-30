@@ -6,6 +6,7 @@ use App\Services\Adapters\DramabiteAdapter;
 use App\Services\Adapters\DramaboxAdapter;
 use App\Services\Adapters\DramanovaAdapter;
 use App\Services\Adapters\DramawaveAdapter;
+use App\Services\Adapters\FlextvAdapter;
 use App\Services\Adapters\FlickreelsAdapter;
 use App\Services\Adapters\FreereelsAdapter;
 use App\Services\Adapters\FundramaAdapter;
@@ -17,6 +18,7 @@ use App\Services\Adapters\MeloloAdapter;
 use App\Services\Adapters\MicrodramaAdapter;
 use App\Services\Adapters\NetshortAdapter;
 use App\Services\Adapters\RapidtvAdapter;
+use App\Services\Adapters\ReelalaAdapter;
 use App\Services\Adapters\ReelifeAdapter;
 use App\Services\Adapters\ReelshortAdapter;
 use App\Services\Adapters\ShortmaxAdapter;
@@ -33,7 +35,7 @@ return [
     'dramabox'   => ['adapter' => DramaboxAdapter::class,   'display' => 'DramaBox'],
     'dramanova'  => ['adapter' => DramanovaAdapter::class,  'display' => 'DramaNova'],
     'dramawave'  => ['adapter' => DramawaveAdapter::class,  'display' => 'DramaWave'],
-    'flextv'     => ['adapter' => RapidtvAdapter::class,    'display' => 'FlexTV'],     // upstream /detail HTTP 500 — catalog-only
+    'flextv'     => ['adapter' => FlextvAdapter::class,     'display' => 'FlexTV'],
     'flickreels' => ['adapter' => FlickreelsAdapter::class, 'display' => 'FlickReels'],
     'freereels'  => ['adapter' => FreereelsAdapter::class,  'display' => 'FreeReels'],
     'fundrama'   => ['adapter' => FundramaAdapter::class,   'display' => 'FunDrama'],
@@ -44,7 +46,7 @@ return [
     'microdrama' => ['adapter' => MicrodramaAdapter::class, 'display' => 'MicroDrama'],
     'netshort'   => ['adapter' => NetshortAdapter::class,   'display' => 'NetShort'],
     'rapidtv'    => ['adapter' => RapidtvAdapter::class,    'display' => 'RapidTV'],
-    'reelala'    => ['adapter' => RapidtvAdapter::class,    'display' => 'ReelAla'],    // upstream /drama HTTP 500 — catalog-only
+    'reelala'    => ['adapter' => ReelalaAdapter::class,    'display' => 'ReelAla'],
     'reelife'    => ['adapter' => ReelifeAdapter::class,    'display' => 'ReelLife'],
     'reelshort'  => ['adapter' => ReelshortAdapter::class,  'display' => 'ReelShort'],
     'shortmax'   => ['adapter' => ShortmaxAdapter::class,   'display' => 'ShortMax'],

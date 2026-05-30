@@ -8,3 +8,4 @@
 /storage/.initial-admin-key
 .DS_Store
 *.log
+.serena/

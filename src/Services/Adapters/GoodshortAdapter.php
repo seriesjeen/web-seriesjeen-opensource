@@ -4,23 +4,19 @@ declare(strict_types=1);
 namespace App\Services\Adapters;
 
 /**
- * GoodShort: two ways to get streaming URLs:
- *   1. /chapters/{id}                → ALL chapters with `cdn` field pointing to a non-encrypted
- *                                      m3u8 (path: /mts/...). Plain HLS, no key needed.
- *   2. /rawurl/{id}?q=720p           → ALL chapters with `m3u8` field pointing to an AES-128
- *                                      encrypted m3u8 (path: /ets/...). Response includes a
- *                                      single `videoKey` (base64) used for the whole book.
- *                                      The m3u8 has `URI="local://..."` placeholder that we
- *                                      replace with `URI="data:...;base64,KEY"` via StreamProxy.
+ * GoodShort (id 102) — provider captain. Flow B + unlock:
+ *   /book/{id}                       → data.book.{bookName, bookDetailCover, introduction, chapterCount, labels}
+ *   /chapters/{id}                   → data.list:[{id, index, charged, image, cdn (plain /mts/ m3u8), multiVideos[]}]
+ *   /play/{id}/{chapter_id}?q=720p   → {m3u8 (encrypted /ets/ m3u8), k (AES-128 key, base64), s}
  *
- * Order: try /chapters first (no decrypt overhead). If a chapter has no cdn, fall back to
- * /rawurl with key injection.
+ * Strategy: prefer the plain `cdn` m3u8 embedded in /chapters (no decrypt). If a chapter has no
+ * cdn (locked/charged), fall back to /play which yields an encrypted m3u8 + key; the key is handed
+ * to StreamProxy via `hls_key` so it gets inlined into the manifest as a data URI for hls.js.
  */
 final class GoodshortAdapter extends BaseAdapter
 {
     private array $cache = [];
     private array $chaptersCache = [];
-    private ?array $rawurlCache = null;
 
     private function fetch(string $seriesId): array
     {
@@ -36,18 +32,6 @@ final class GoodshortAdapter extends BaseAdapter
             return $this->chaptersCache[$seriesId] = ($r['data']['list'] ?? []);
         } catch (\Throwable) {
             return $this->chaptersCache[$seriesId] = [];
-        }
-    }
-
-    /** Cache /rawurl payload (encrypted variant + AES key). */
-    private function fetchRawurl(string $seriesId): ?array
-    {
-        if ($this->rawurlCache !== null) return $this->rawurlCache;
-        try {
-            $r = $this->api->getJson($this->basePath() . '/rawurl/' . rawurlencode($seriesId), ['q' => '720p']);
-            return $this->rawurlCache = ($r['data'] ?? null);
-        } catch (\Throwable) {
-            return $this->rawurlCache = null;
         }
     }
 
@@ -113,49 +97,39 @@ final class GoodshortAdapter extends BaseAdapter
     /** Lazy fetch — called by PlayerController when episodes()[ep].sources is empty. */
     public function playEpisode(string $seriesId, int $episode): array
     {
-        // First try /chapters (plain m3u8)
+        $chapterId = null;
         foreach ($this->fetchChapters($seriesId) as $ep) {
             if (!is_array($ep)) continue;
             $idx = (int)($ep['index'] ?? -1) + 1;
             if ($idx !== $episode) continue;
+            // Plain m3u8 embedded in the chapter — no decrypt needed.
             $sources = $this->parseSourcesFromChapter($ep);
             if (!empty($sources)) {
                 return ['episode'=>$episode, 'locked'=>false, 'sources'=>$sources, 'subtitles'=>[]];
             }
+            $chapterId = (string)($ep['id'] ?? '');
+            break;
         }
+        if (!$chapterId) return ['episode'=>$episode, 'locked'=>false, 'sources'=>[], 'subtitles'=>[]];
 
-        // Fallback: /rawurl encrypted variant with AES key injection (per goodshort-proxy.js spec)
-        $raw = $this->fetchRawurl($seriesId);
-        if ($raw) {
-            $videoKey = $raw['videoKey'] ?? null;
-            foreach (($raw['episodes'] ?? []) as $ep) {
-                if (!is_array($ep)) continue;
-                $idx = (int)($ep['index'] ?? -1) + 1;
-                if ($idx !== $episode) continue;
-                $sources = [];
-                foreach (($ep['allVideos'] ?? []) as $v) {
-                    if (!is_array($v) || empty($v['rawUrl'])) continue;
-                    $sources[] = [
-                        'quality' => (string)($v['type'] ?? 'auto'),
-                        'codec'   => 'h264',
-                        'url'     => (string)$v['rawUrl'],
-                        'hls_key' => $videoKey,  // StreamProxy will inject into m3u8 as data URI
-                    ];
-                }
-                if (!empty($ep['m3u8']) && empty($sources)) {
-                    $sources[] = [
-                        'quality' => 'auto',
-                        'codec'   => 'h264',
-                        'url'     => (string)$ep['m3u8'],
-                        'hls_key' => $videoKey,
-                    ];
-                }
-                if (!empty($sources)) {
-                    return ['episode'=>$episode, 'locked'=>false, 'sources'=>$sources, 'subtitles'=>[]];
-                }
+        // Encrypted variant: /play/{id}/{chapter_id} → {m3u8, k}. The key is injected into the
+        // manifest as a data URI by StreamProxy (replacing the upstream `local://` placeholder).
+        try {
+            $resp = $this->api->getJson($this->basePath() . '/play/' . rawurlencode($seriesId) . '/' . rawurlencode($chapterId), ['q' => '720p']);
+        } catch (\Throwable) {
+            return ['episode'=>$episode, 'locked'=>false, 'sources'=>[], 'subtitles'=>[]];
+        }
+        $p = $resp['data'] ?? $resp;
+        $key = $p['k'] ?? $p['videoKey'] ?? null;
+        $sources = [];
+        foreach (['m3u8', 'cdn', 'url', 'video_url'] as $f) {
+            if (!empty($p[$f]) && is_string($p[$f])) {
+                $src = ['quality'=>'auto', 'codec'=>'h264', 'url'=>(string)$p[$f]];
+                if ($key && is_string($key) && str_contains((string)$p[$f], '/ets/')) $src['hls_key'] = $key;
+                $sources[] = $src;
+                break;
             }
         }
-
-        return ['episode'=>$episode, 'locked'=>false, 'sources'=>[], 'subtitles'=>[]];
+        return ['episode'=>$episode, 'locked'=>false, 'sources'=>$sources, 'subtitles'=>[]];
     }
 }

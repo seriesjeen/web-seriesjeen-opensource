@@ -4,68 +4,104 @@ declare(strict_types=1);
 namespace App\Services\Adapters;
 
 /**
- * DramaWave: /drama/{id} returns the full catalog AND episode list with sources embedded.
- *   data.{cover, episode_count, items:[{1080p_mp4, 720p_mp4, 540p_mp4, m3u8_path, subtitle_list, serial_number, ...}]}
+ * DramaWave (id 26) — provider captain (mydramawave backend). Flow C:
+ *   /drama/{id}              → data.info.{name, desc, cover, episode_count, content_tags,
+ *                                         episode_list:[{index, video_url, m3u8_url,
+ *                                         external_audio_h264_m3u8, external_audio_h265_m3u8,
+ *                                         subtitle_list[], unlock, duration, video_type}]}
+ *   /drama/{id}/play/{ep}    → data.{<same episode shape>}  (per-episode fallback)
  */
 final class DramawaveAdapter extends BaseAdapter
 {
     private array $cache = [];
 
-    private function fetch(string $seriesId): array
+    private function fetchInfo(string $seriesId): array
     {
         if (isset($this->cache[$seriesId])) return $this->cache[$seriesId];
         $resp = $this->api->getJson($this->basePath() . '/drama/' . rawurlencode($seriesId));
-        return $this->cache[$seriesId] = ($resp['data'] ?? $resp);
+        $info = $resp['data']['info'] ?? $resp['data'] ?? $resp;
+        return $this->cache[$seriesId] = (is_array($info) ? $info : []);
     }
 
     public function detail(string $seriesId): array
     {
-        $d = $this->fetch($seriesId);
+        $i = $this->fetchInfo($seriesId);
+        $tags = array_filter(array_merge((array)($i['tag'] ?? []), (array)($i['content_tags'] ?? [])));
         return [
-            'title'         => (string)($d['title'] ?? $d['name'] ?? self::findTitle($d) ?? ''),
-            'description'   => $d['description'] ?? $d['desc'] ?? self::findDescription($d),
-            'cover'         => $d['cover'] ?? self::findCover($d),
-            'episode_count' => isset($d['episode_count']) ? (int)$d['episode_count'] : null,
-            'genre'         => $d['genre'] ?? null,
-            'extras'        => $d,
+            'title'         => (string)($i['name'] ?? $i['title'] ?? self::findTitle($i) ?? ''),
+            'description'   => $i['desc'] ?? $i['description'] ?? self::findDescription($i),
+            'cover'         => $i['cover'] ?? self::findCover($i),
+            'episode_count' => isset($i['episode_count']) ? (int)$i['episode_count'] : self::findCountAnywhere($i),
+            'genre'         => $tags ? implode(', ', $tags) : null,
+            'extras'        => $i,
         ];
     }
 
     public function episodes(string $seriesId): array
     {
-        $d = $this->fetch($seriesId);
-        $items = $d['items'] ?? [];
+        $i = $this->fetchInfo($seriesId);
         $eps = [];
-        foreach ($items as $item) {
-            if (!is_array($item)) continue;
-            $sources = [];
-            if (!empty($item['m3u8_path']))   $sources[] = ['quality'=>'auto','codec'=>'h264','url'=>(string)$item['m3u8_path']];
-            if (!empty($item['540p_mp4']))    $sources[] = ['quality'=>'540','codec'=>'h264','url'=>(string)$item['540p_mp4']];
-            if (!empty($item['720p_mp4']))    $sources[] = ['quality'=>'720','codec'=>'h264','url'=>(string)$item['720p_mp4']];
-            if (!empty($item['1080p_mp4']))   $sources[] = ['quality'=>'1080','codec'=>'h264','url'=>(string)$item['1080p_mp4']];
-
-            $subs = [];
-            foreach (($item['subtitle_list'] ?? []) as $s) {
-                if (!is_array($s)) continue;
-                $subs[] = [
-                    'lang'  => (string)($s['language'] ?? ''),
-                    'label' => (string)($s['display_name'] ?? $s['language'] ?? ''),
-                    'vtt'   => $s['vtt'] ?? null,
-                    'srt'   => $s['subtitle'] ?? null,
-                ];
-            }
-
+        foreach (($i['episode_list'] ?? []) as $k => $ep) {
+            if (!is_array($ep)) continue;
+            $sources = self::parseEpisodeSources($ep);
             $eps[] = [
-                'episode'  => (int)($item['serial_number'] ?? 0),
-                'id'       => (string)($item['id'] ?? ''),
-                'locked'   => ($item['video_type'] ?? 'free') !== 'free' && empty($sources),
-                'cover'    => $item['cover'] ?? null,
-                'duration' => isset($item['duration']) ? (int)$item['duration'] : null,
+                'episode'  => (int)($ep['index'] ?? ($k + 1)),
+                'id'       => (string)($ep['id'] ?? ''),
+                'locked'   => !($ep['unlock'] ?? true) && empty($sources),
+                'duration' => isset($ep['duration']) ? (int)$ep['duration'] : null,
+                'cover'    => $ep['cover'] ?? null,
                 'sources'  => $sources,
-                'subtitles'=> $subs,
+                'subtitles'=> self::parseSubtitles($ep['subtitle_list'] ?? []),
+                'lazy'     => empty($sources),
             ];
         }
         usort($eps, fn($a, $b) => $a['episode'] <=> $b['episode']);
-        return ['series_id' => $seriesId, 'episodes' => $eps];
+        return ['series_id' => $seriesId, 'episodes' => $eps, 'lazy' => true];
+    }
+
+    public function playEpisode(string $seriesId, int $episode): array
+    {
+        try {
+            $resp = $this->api->getJson($this->basePath() . '/drama/' . rawurlencode($seriesId) . '/play/' . $episode);
+        } catch (\Throwable) {
+            return ['episode' => $episode, 'locked' => false, 'sources' => [], 'subtitles' => []];
+        }
+        $d = $resp['data'] ?? $resp;
+        if (!is_array($d)) $d = [];
+        return [
+            'episode'   => (int)($d['index'] ?? $episode),
+            'id'        => (string)($d['id'] ?? ''),
+            'locked'    => false,
+            'cover'     => $d['cover'] ?? null,
+            'sources'   => self::parseEpisodeSources($d),
+            'subtitles' => self::parseSubtitles($d['subtitle_list'] ?? []),
+        ];
+    }
+
+    /** @param array<string,mixed> $ep */
+    public static function parseEpisodeSources(array $ep): array
+    {
+        $sources = [];
+        if (!empty($ep['external_audio_h264_m3u8'])) $sources[] = ['quality'=>'auto','codec'=>'h264','url'=>(string)$ep['external_audio_h264_m3u8']];
+        if (!empty($ep['external_audio_h265_m3u8'])) $sources[] = ['quality'=>'auto','codec'=>'h265','url'=>(string)$ep['external_audio_h265_m3u8']];
+        if (!empty($ep['m3u8_url']))  $sources[] = ['quality'=>'auto','codec'=>'h264','url'=>(string)$ep['m3u8_url']];
+        if (empty($sources) && !empty($ep['video_url'])) $sources[] = ['quality'=>'auto','codec'=>'h264','url'=>(string)$ep['video_url']];
+        return $sources;
+    }
+
+    /** @param array<int,mixed> $list */
+    public static function parseSubtitles(array $list): array
+    {
+        $out = [];
+        foreach ($list as $s) {
+            if (!is_array($s)) continue;
+            $out[] = [
+                'lang'  => (string)($s['language'] ?? ''),
+                'label' => (string)($s['display_name'] ?? $s['language'] ?? ''),
+                'vtt'   => $s['vtt'] ?? null,
+                'srt'   => $s['subtitle'] ?? null,
+            ];
+        }
+        return $out;
     }
 }

@@ -4,33 +4,31 @@ declare(strict_types=1);
 namespace App\Services\Adapters;
 
 /**
- * FlickReels (id 130) — provider dramabos. Flow A (single request returns everything):
- *   /drama/{id} → data.{title, cover, total, introduce, list:[
- *                   {chapter_id, chapter_num, chapter_title, hls_url, play_url, is_lock, chapter_cover}
- *                 ]}
- *
- * NOTE: hls_url segments (.ts) on farsunpteltd.com may lack CORS — they are routed through
- * StreamProxy (same-origin) by PlayerController, which sidesteps that.
+ * ReelAla (id 165) — provider captain. Flow A (single request returns everything, no Thai):
+ *   /drama/{id}/videos → data.{playlet_id, title, cover, list:[
+ *                          {chapter_id, chapter_num, chapter_cover, chapter_title, hls_url}
+ *                        ]}
  */
-final class FlickreelsAdapter extends BaseAdapter
+final class ReelalaAdapter extends BaseAdapter
 {
     private array $cache = [];
 
     private function fetch(string $seriesId): array
     {
         if (isset($this->cache[$seriesId])) return $this->cache[$seriesId];
-        $resp = $this->api->getJson($this->basePath() . '/drama/' . rawurlencode($seriesId));
+        $resp = $this->api->getJson($this->basePath() . '/drama/' . rawurlencode($seriesId) . '/videos');
         return $this->cache[$seriesId] = ($resp['data'] ?? $resp);
     }
 
     public function detail(string $seriesId): array
     {
         $d = $this->fetch($seriesId);
+        $list = $d['list'] ?? [];
         return [
-            'title'         => (string)($d['title'] ?? $d['playlet_title'] ?? ''),
-            'description'   => $d['introduce'] ?? $d['description'] ?? null,
-            'cover'         => $d['cover'] ?? $d['process_cover'] ?? null,
-            'episode_count' => isset($d['total']) ? (int)$d['total'] : null,
+            'title'         => (string)($d['title'] ?? $d['contract_title'] ?? ''),
+            'description'   => $d['description'] ?? $d['introduce'] ?? null,
+            'cover'         => $d['cover'] ?? null,
+            'episode_count' => is_array($list) ? count($list) : null,
             'genre'         => null,
             'extras'        => $d,
         ];
@@ -42,12 +40,8 @@ final class FlickreelsAdapter extends BaseAdapter
         $eps = [];
         foreach (($d['list'] ?? []) as $i => $ep) {
             if (!is_array($ep)) continue;
-            $sources = [];
-            foreach (['hls_url' => 'h264', 'play_url' => 'h264'] as $field => $codec) {
-                if (!empty($ep[$field])) {
-                    $sources[] = ['quality'=>'auto','codec'=>$codec,'url'=>(string)$ep[$field]];
-                }
-            }
+            $url = $ep['hls_url'] ?? $ep['play_url'] ?? null;
+            $sources = $url ? [['quality'=>'auto','codec'=>'h264','url'=>(string)$url]] : [];
             $eps[] = [
                 'episode'  => (int)($ep['chapter_num'] ?? ($i + 1)),
                 'id'       => (string)($ep['chapter_id'] ?? ''),

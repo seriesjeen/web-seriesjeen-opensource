@@ -4,21 +4,29 @@ declare(strict_types=1);
 namespace App\Services\Adapters;
 
 /**
- * MicroDrama:
- *   /drama/{id}                       → meta (data.total_episodes)
- *   /play/{drama_id}/{episode_no}     → {success, data:{videos:[{quality,url}]}}
+ * MicroDrama (id 146) — provider captain. Flow A (single request returns everything):
+ *   /drama/{id} → {drama:{id, title, description, total_episodes, cover},
+ *                  episodes:[{index, videos:[{quality, url, width, height}]}]}
  */
 final class MicrodramaAdapter extends BaseAdapter
 {
+    private array $cache = [];
+
+    private function fetch(string $seriesId): array
+    {
+        if (isset($this->cache[$seriesId])) return $this->cache[$seriesId];
+        return $this->cache[$seriesId] = $this->api->getJson($this->basePath() . '/drama/' . rawurlencode($seriesId));
+    }
+
     public function detail(string $seriesId): array
     {
-        $resp = $this->api->getJson($this->basePath() . '/drama/' . rawurlencode($seriesId));
-        $d = $resp['data'] ?? $resp;
+        $resp = $this->fetch($seriesId);
+        $d = $resp['drama'] ?? $resp['data'] ?? $resp;
         return [
-            'title'         => (string)($d['title'] ?? $d['name'] ?? self::findTitle($d) ?? ''),
-            'description'   => $d['description'] ?? $d['desc'] ?? self::findDescription($d),
-            'cover'         => $d['cover'] ?? $d['image'] ?? self::findCover($d),
-            'episode_count' => isset($d['total_episodes']) ? (int)$d['total_episodes'] : self::findCountAnywhere($d),
+            'title'         => (string)($d['title'] ?? $d['name'] ?? self::findTitle($resp) ?? ''),
+            'description'   => $d['description'] ?? $d['desc'] ?? self::findDescription($resp),
+            'cover'         => $d['cover'] ?? $d['image'] ?? self::findCover($resp),
+            'episode_count' => isset($d['total_episodes']) ? (int)$d['total_episodes'] : self::findCountAnywhere($resp),
             'genre'         => $d['genre'] ?? null,
             'extras'        => $d,
         ];
@@ -26,28 +34,29 @@ final class MicrodramaAdapter extends BaseAdapter
 
     public function episodes(string $seriesId): array
     {
-        $d = $this->detail($seriesId);
-        $count = $d['episode_count'] ?? 0;
+        $resp = $this->fetch($seriesId);
+        $list = $resp['episodes'] ?? [];
         $eps = [];
-        for ($i = 1; $i <= $count; $i++) {
-            $eps[] = ['episode'=>$i, 'locked'=>false, 'sources'=>[], 'subtitles'=>[], 'lazy'=>true];
-        }
-        return ['series_id' => $seriesId, 'episodes' => $eps, 'lazy' => true];
-    }
-
-    public function playEpisode(string $seriesId, int $episode): array
-    {
-        $resp = $this->api->getJson($this->basePath() . '/play/' . rawurlencode($seriesId) . '/' . $episode);
-        $d = $resp['data'] ?? $resp;
-        $sources = [];
-        foreach (($d['videos'] ?? []) as $v) {
-            if (!is_array($v) || empty($v['url'])) continue;
-            $sources[] = [
-                'quality' => (string)($v['quality'] ?? 'auto'),
-                'codec'   => 'h264',
-                'url'     => (string)$v['url'],
+        foreach ($list as $k => $ep) {
+            if (!is_array($ep)) continue;
+            $sources = [];
+            foreach (($ep['videos'] ?? []) as $v) {
+                if (!is_array($v) || empty($v['url'])) continue;
+                $sources[] = [
+                    'quality' => (string)($v['quality'] ?? 'auto'),
+                    'codec'   => 'h264',
+                    'url'     => (string)$v['url'],
+                ];
+            }
+            $eps[] = [
+                'episode'  => (int)($ep['index'] ?? ($k + 1)),
+                'id'       => (string)($ep['id'] ?? ''),
+                'locked'   => false,
+                'sources'  => $sources,
+                'subtitles'=> [],
             ];
         }
-        return ['episode'=>$episode, 'locked'=>false, 'sources'=>$sources, 'subtitles'=>[]];
+        usort($eps, fn($a, $b) => $a['episode'] <=> $b['episode']);
+        return ['series_id' => $seriesId, 'episodes' => $eps];
     }
 }

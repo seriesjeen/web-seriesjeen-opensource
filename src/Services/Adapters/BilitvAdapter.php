@@ -3,7 +3,13 @@ declare(strict_types=1);
 
 namespace App\Services\Adapters;
 
-/** BiliTV: /short/{id} detail, /short/{id}/episode list, /stream/{id}/{ep}?quality=720 */
+/**
+ * BiliTV (id 129) — provider dramabos. Flow B:
+ *   /short/{id}                  → data.{title, cover_img, desc, cate_name}
+ *   /episode/{id}                → data.{list:[{episode, locked}], total}  (no URLs → lazy)
+ *   /stream/{id}/{ep}?quality=   → data.{allQualities:{1080,720,478}, url, subtitle}
+ *   /subtitle/{id}/{ep}?format=  → subtitle track (404 = no subs, normal)
+ */
 final class BilitvAdapter extends BaseAdapter
 {
     public function detail(string $seriesId): array
@@ -12,31 +18,29 @@ final class BilitvAdapter extends BaseAdapter
         $d = $resp['data'] ?? $resp;
         if (!is_array($d)) $d = [];
 
-        // BiliTV detail rarely carries episode_count — derive from /episode endpoint length
         $count = self::findCountAnywhere($d);
         if ($count === null) {
             try {
-                $epResp = $this->api->getJson($this->basePath() . '/short/' . rawurlencode($seriesId) . '/episode');
-                $list = $epResp['list'] ?? $epResp['data']['list'] ?? $epResp['data'] ?? [];
+                $epResp = $this->api->getJson($this->basePath() . '/episode/' . rawurlencode($seriesId));
+                $list = $epResp['data']['list'] ?? $epResp['list'] ?? $epResp['data'] ?? [];
                 if (is_array($list) && array_is_list($list)) $count = count($list);
             } catch (\Throwable) { /* ignore */ }
         }
 
         return [
             'title'         => (string)($d['title'] ?? $d['name'] ?? self::findTitle($d) ?? ''),
-            'description'   => $d['summary'] ?? $d['description'] ?? $d['desc'] ?? self::findDescription($d),
-            'cover'         => $d['cover'] ?? $d['image'] ?? self::findCover($d),
+            'description'   => $d['desc'] ?? $d['summary'] ?? $d['description'] ?? self::findDescription($d),
+            'cover'         => $d['cover_img'] ?? $d['cover'] ?? $d['image'] ?? self::findCover($d),
             'episode_count' => $count,
-            'genre'         => self::flattenGenre($d['genre'] ?? $d['tag'] ?? null),
+            'genre'         => self::flattenGenre($d['cate_name'] ?? $d['genre'] ?? $d['tag'] ?? null),
             'extras'        => $d,
         ];
     }
 
     public function episodes(string $seriesId): array
     {
-        $resp = $this->api->getJson($this->basePath() . '/short/' . rawurlencode($seriesId) . '/episode');
-        // Bilitv shape: {"list":[{episode:int, locked:bool}, ...]}
-        $list = $resp['list'] ?? $resp['data']['list'] ?? $resp['data'] ?? $resp['episodes'] ?? [];
+        $resp = $this->api->getJson($this->basePath() . '/episode/' . rawurlencode($seriesId));
+        $list = $resp['data']['list'] ?? $resp['list'] ?? $resp['data'] ?? $resp['episodes'] ?? [];
         if (!is_array($list) || !array_is_list($list)) $list = [];
 
         $eps = [];
@@ -59,27 +63,37 @@ final class BilitvAdapter extends BaseAdapter
     public function playEpisode(string $seriesId, int $episode): array
     {
         $sources = [];
-        foreach (['1080', '720', '540', '360'] as $q) {
-            try {
-                $resp = $this->api->getJson($this->basePath() . '/stream/' . rawurlencode($seriesId) . '/' . $episode, ['quality' => $q]);
-                $d = $resp['data'] ?? $resp;
-                $url = $d['m3u8_url'] ?? $d['url'] ?? $d['stream'] ?? null;
-                if ($url) $sources[] = ['quality' => $q, 'codec' => 'h264', 'url' => (string)$url];
-            } catch (\Throwable) { /* skip */ }
-        }
+        try {
+            $resp = $this->api->getJson($this->basePath() . '/stream/' . rawurlencode($seriesId) . '/' . $episode, ['quality' => '720']);
+            $d = $resp['data'] ?? $resp;
+            $all = $d['allQualities'] ?? [];
+            if (is_array($all)) {
+                foreach (['1080', '720', '540', '478', '360'] as $q) {
+                    if (!empty($all[$q])) $sources[] = ['quality'=>$q, 'codec'=>'h264', 'url'=>(string)$all[$q]];
+                }
+                foreach ($all as $q => $url) {
+                    if (is_string($url) && $url !== '' && !in_array((string)$q, ['1080','720','540','478','360'], true)) {
+                        $sources[] = ['quality'=>(string)$q, 'codec'=>'h264', 'url'=>$url];
+                    }
+                }
+            }
+            if (empty($sources) && !empty($d['url'])) {
+                $sources[] = ['quality'=>'auto', 'codec'=>'h264', 'url'=>(string)$d['url']];
+            }
+        } catch (\Throwable) { /* skip */ }
 
         $subs = [];
         try {
             $sub = $this->api->getJson($this->basePath() . '/subtitle/' . rawurlencode($seriesId) . '/' . $episode, ['format' => 'vtt']);
             foreach (($sub['data'] ?? $sub['subtitles'] ?? []) as $s) {
-                if (!is_array($s)) continue;
+                if (!is_array($s) || empty($s['url'] ?? $s['vtt'] ?? null)) continue;
                 $subs[] = [
-                    'lang' => (string)($s['language'] ?? $s['lang'] ?? ''),
-                    'label'=> (string)($s['display_name'] ?? $s['label'] ?? $s['language'] ?? ''),
-                    'vtt'  => $s['vtt'] ?? $s['url'] ?? null,
+                    'lang'  => (string)($s['language'] ?? $s['lang'] ?? ''),
+                    'label' => (string)($s['display_name'] ?? $s['label'] ?? $s['language'] ?? ''),
+                    'vtt'   => $s['vtt'] ?? $s['url'] ?? null,
                 ];
             }
-        } catch (\Throwable) { /* no subs */ }
+        } catch (\Throwable) { /* no subs — normal for bilitv */ }
 
         return ['episode' => $episode, 'locked' => false, 'sources' => $sources, 'subtitles' => $subs];
     }

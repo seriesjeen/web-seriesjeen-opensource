@@ -4,9 +4,10 @@ declare(strict_types=1);
 namespace App\Services\Adapters;
 
 /**
- * Netshort: /drama/{series_id} returns data.totalEpisode + data.shortPlayEpisodeList[]
- * Each episode entry has {episodeNo, episodeId, isLock, playVoucher (url), sdkVid}
- * The playVoucher is the playable URL directly.
+ * NetShort (id 25) — provider captain. Flow C:
+ *   /drama/{id}            → data.{title, cover, description, labels, totalEpisodes,
+ *                                  episodes:[{episodeNo, episodeId, cover, isLocked}]}  (no URLs → lazy)
+ *   /watch/{id}/{ep}       → data.{episodeId, videos:[{quality,url}], subtitles:[{language,format,url}]}
  */
 final class NetshortAdapter extends BaseAdapter
 {
@@ -23,11 +24,11 @@ final class NetshortAdapter extends BaseAdapter
     {
         $d = $this->fetch($seriesId);
         return [
-            'title'         => (string)($d['shortPlayName'] ?? ''),
-            'description'   => null,
-            'cover'         => $d['shortPlayCover'] ?? null,
-            'episode_count' => isset($d['totalEpisode']) ? (int)$d['totalEpisode'] : null,
-            'genre'         => self::flattenGenre($d['shortPlayLabels'] ?? null),
+            'title'         => (string)($d['title'] ?? $d['shortPlayName'] ?? self::findTitle($d) ?? ''),
+            'description'   => $d['description'] ?? null,
+            'cover'         => $d['cover'] ?? $d['shortPlayCover'] ?? self::findCover($d),
+            'episode_count' => isset($d['totalEpisodes']) ? (int)$d['totalEpisodes'] : (isset($d['totalEpisode']) ? (int)$d['totalEpisode'] : self::findCountAnywhere($d)),
+            'genre'         => self::flattenGenre($d['labels'] ?? $d['shortPlayLabels'] ?? null),
             'extras'        => $d,
         ];
     }
@@ -35,18 +36,18 @@ final class NetshortAdapter extends BaseAdapter
     public function episodes(string $seriesId): array
     {
         $d = $this->fetch($seriesId);
+        $list = $d['episodes'] ?? $d['shortPlayEpisodeList'] ?? [];
         $eps = [];
-        foreach (($d['shortPlayEpisodeList'] ?? []) as $ep) {
+        foreach ($list as $i => $ep) {
             if (!is_array($ep)) continue;
             $eps[] = [
-                'episode'  => (int)($ep['episodeNo'] ?? 0),
+                'episode'  => (int)($ep['episodeNo'] ?? ($i + 1)),
                 'id'       => (string)($ep['episodeId'] ?? ''),
-                'locked'   => (bool)($ep['isLock'] ?? false),
-                'sources'  => !empty($ep['playVoucher'])
-                                ? [['quality'=>'auto', 'codec'=>'h264', 'url'=>(string)$ep['playVoucher']]]
-                                : [],
+                'locked'   => (bool)($ep['isLocked'] ?? $ep['isLock'] ?? false),
+                'cover'    => $ep['cover'] ?? null,
+                'sources'  => [],
                 'subtitles'=> [],
-                'lazy'     => empty($ep['playVoucher']),
+                'lazy'     => true,
             ];
         }
         usort($eps, fn($a, $b) => $a['episode'] <=> $b['episode']);
@@ -55,23 +56,37 @@ final class NetshortAdapter extends BaseAdapter
 
     public function playEpisode(string $seriesId, int $episode): array
     {
-        // /drama/{id} only fills playVoucher for EP 1 — use /watch/{id}/{ep} for the rest
         try {
             $resp = $this->api->getJson($this->basePath() . '/watch/' . rawurlencode($seriesId) . '/' . $episode);
         } catch (\Throwable) {
-            return ['episode'=>$episode,'locked'=>false,'sources'=>[],'subtitles'=>[]];
+            return ['episode' => $episode, 'locked' => false, 'sources' => [], 'subtitles' => []];
         }
         $d = $resp['data'] ?? $resp;
-        $url = $d['videoUrl'] ?? $d['playVoucher'] ?? $d['m3u8_url'] ?? null;
+
+        $sources = [];
+        foreach (($d['videos'] ?? []) as $v) {
+            if (!is_array($v) || empty($v['url'])) continue;
+            $sources[] = [
+                'quality' => (string)($v['quality'] ?? 'auto'),
+                'codec'   => 'h264',
+                'url'     => (string)$v['url'],
+            ];
+        }
+        // single-url fallback shapes
+        if (empty($sources)) {
+            $url = $d['videoUrl'] ?? $d['m3u8_url'] ?? null;
+            if ($url) $sources[] = ['quality'=>'auto','codec'=>'h264','url'=>(string)$url];
+        }
 
         $subs = [];
         foreach (($d['subtitles'] ?? []) as $s) {
             if (!is_array($s) || empty($s['url'])) continue;
             $u = (string)$s['url'];
-            $isVtt = str_contains($u, '.vtt') || (str_contains($u, 'mime_type=text_vtt'));
+            $fmt = strtolower((string)($s['format'] ?? ''));
+            $isVtt = $fmt === 'webvtt' || $fmt === 'vtt' || str_contains(strtolower($u), '.vtt') || str_contains($u, 'text_vtt');
             $subs[] = [
-                'lang'  => (string)($s['lang'] ?? $s['language'] ?? ''),
-                'label' => (string)($s['lang'] ?? ''),
+                'lang'  => (string)($s['language'] ?? $s['lang'] ?? ''),
+                'label' => (string)($s['language'] ?? $s['lang'] ?? ''),
                 'vtt'   => $isVtt ? $u : null,
                 'srt'   => $isVtt ? null : $u,
             ];
@@ -79,8 +94,8 @@ final class NetshortAdapter extends BaseAdapter
 
         return [
             'episode'   => $episode,
-            'locked'    => empty($d['status']),
-            'sources'   => $url ? [['quality'=>'auto','codec'=>'h264','url'=>(string)$url]] : [],
+            'locked'    => false,
+            'sources'   => $sources,
             'subtitles' => $subs,
         ];
     }

@@ -46,33 +46,25 @@ View::start('content');
         <?php foreach ($episodes as $ep): ?>
             <?php
                 $n = (int)($ep['episode'] ?? 0);
-                $locked = !empty($ep['locked']);
                 $href = '/p/' . urlencode($slug) . '/watch/' . urlencode($series_id) . '/' . $n;
             ?>
-            <a href="<?= $locked ? '#' : View::e($href) ?>"
-               onclick="<?= $locked ? "Swal.fire({icon: 'warning', title: 'ตอนถูกล็อก!', text: 'ตอนนี้ยังไม่เปิดให้รับชมในบัญชีของคุณ', confirmButtonColor: 'var(--brand-color)', background: '#090d16', color: '#cbd5e1'}); return false;" : "" ?>"
+            <a href="<?= View::e($href) ?>"
                class="group relative overflow-hidden rounded-2xl border transition-all duration-300 active:scale-95 flex flex-col justify-between p-3.5 min-h-[96px] shadow-lg
-                      <?= $locked ? 'bg-slate-950/40 border-slate-900/60 text-slate-500 cursor-not-allowed' : 'bg-slate-900/40 border-slate-800/80 text-slate-200 hover:text-white hover:border-brand-500 hover:-translate-y-1 hover:shadow-brand-500/10' ?>">
-                
+                      bg-slate-900/40 border-slate-800/80 text-slate-200 hover:text-white hover:border-brand-500 hover:-translate-y-1 hover:shadow-brand-500/10">
+
                 <!-- Glow gradient overlay on hover -->
-                <?php if (!$locked): ?>
-                    <div class="absolute inset-0 bg-gradient-to-br from-brand-500/0 to-indigo-500/0 group-hover:from-brand-500/5 group-hover:to-indigo-500/5 transition duration-300 pointer-events-none"></div>
-                <?php endif ?>
+                <div class="absolute inset-0 bg-gradient-to-br from-brand-500/0 to-indigo-500/0 group-hover:from-brand-500/5 group-hover:to-indigo-500/5 transition duration-300 pointer-events-none"></div>
 
                 <!-- Episode Card Header -->
                 <div class="flex items-center justify-between w-full relative z-10">
                     <span class="text-[9px] tracking-wider uppercase font-extrabold text-slate-500 group-hover:text-brand-400 transition">EPISODE</span>
-                    <?php if ($locked): ?>
-                        <i class="fa-solid fa-lock text-[10px] text-slate-650"></i>
-                    <?php else: ?>
-                        <i class="fa-solid fa-circle-play text-slate-500 group-hover:text-brand-500 transform group-hover:scale-110 transition duration-300"></i>
-                    <?php endif ?>
+                    <i class="fa-solid fa-circle-play text-slate-500 group-hover:text-brand-500 transform group-hover:scale-110 transition duration-300"></i>
                 </div>
-                
+
                 <!-- Episode Title and Caption -->
                 <div class="mt-3 relative z-10">
                     <span class="text-lg font-black font-heading tracking-tight block">ตอนที่ <?= $n ?></span>
-                    <span class="text-[9px] font-bold text-slate-500 group-hover:text-slate-350 transition"><?= $locked ? 'ปิดรับชมอยู่' : 'คลิกเพื่อรับชม' ?></span>
+                    <span class="text-[9px] font-bold text-slate-500 group-hover:text-slate-350 transition">คลิกเพื่อรับชม</span>
                 </div>
             </a>
         <?php endforeach ?>
